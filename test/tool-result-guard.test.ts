@@ -634,6 +634,9 @@ async function heldRestart(mode: 'explicit' | 'locus', texts: { first: string; s
     return stream;
   };
   (h.framework as unknown as { channelRegistry: unknown }).channelRegistry = new Proxy(withDeliverSpeech({
+    // This rig tests channel delivery ordering, so its console wake must
+    // resolve to a channel rather than an operator surface with no locus.
+    resolveLocus: () => 'chan-home',
     resolveProseTarget: (spec: string) => spec === '#alpha' ? { channelId: 'chan-alpha' }
       : spec === '#cafe' ? { channelId: directory.cafe } : { error: `no channel ${spec}` },
     routeSpeech: async (_agent: string, text: string, channelId: string | null) => {

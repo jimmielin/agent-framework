@@ -103,6 +103,7 @@ import { isSilentHeartbeatMarker, isVisiblyEmptyContent, NON_STRING_TEXT_PLACEHO
 import { parseProsePrefix, parseHybridProsePrefix } from './mcpl/prose-grammar.js';
 import { detectKnownToolWrapperProse } from './tool-wrapper-prose-guard.js';
 import { InferenceRouter } from './mcpl/inference-router.js';
+import { proseStaysOnOperatorSurface } from './mcpl/operator-surface.js';
 import { ChannelRegistry, TUNE_OUT_REPLACED, connectorText, desiredStateInLog, destinationKey, journalToolDescription, NON_HOLDER_CHANNEL_DESCRIPTIONS, type ChannelToolOrigin, type PublishDestination, type PublishOutcome, type SelectedForOpening } from './mcpl/channel-registry.js';
 import { KEEP_IDLE_MS, KEEP_NEWEST, ProseDraftStore, draftState, uncertainAttempt, type Draft, type DraftAttempt, type DraftReason, type DraftState, type InheritedRisk } from './prose-drafts.js';
 import { ConversationRouter, CONVERSATION_ROUTING_DEPRECATION_NOTICE } from './mcpl/conversation-router.js';
@@ -18039,11 +18040,29 @@ export class AgentFramework {
       }
     };
 
+    // Operator surfaces render their own replies. With no channel locus,
+    // routing plain prose would only add an undeliverable notice and a
+    // route-failed trace. Share this check across live, text-only and trailing
+    // speech, and note it once rather than once per segment.
+    let operatorSurfaceNoted = false;
+    const routeTurnSpeech = async (text: string, locus: string | null): Promise<void> => {
+      if (proseStaysOnOperatorSurface(trigger, locus)) {
+        if (!operatorSurfaceNoted) {
+          operatorSurfaceNoted = true;
+          console.error(
+            `[routing] ${agent.name}: operator-surface turn with no channel locus — prose stays in chronicle (shown by the surface)`,
+          );
+        }
+        return;
+      }
+      const outcome = await this.channelRegistry!.routeSpeech(agent.name, text, locus);
+      this.recordProseDelivery(streamRouting, outcome);
+      if (outcome?.delivered) streamSpeech(outcome, text, outcome.messageId);
+    };
+
     const enqueueSpeech = (text: string, locus: string | null): void => {
       chainSpeech(async () => {
-        const outcome = await this.channelRegistry!.routeSpeech(agent.name, text, locus);
-        this.recordProseDelivery(streamRouting, outcome);
-        if (outcome?.delivered) streamSpeech(outcome, text, outcome.messageId);
+        await routeTurnSpeech(text, locus);
       }, 'mid-turn speech routing failed:');
     };
 
@@ -19091,9 +19110,7 @@ export class AgentFramework {
                   );
                   for (const segment of speechSegments) {
                     try {
-                      const outcome = await this.channelRegistry.routeSpeech(agent.name, segment, locus);
-                      this.recordProseDelivery(streamRouting, outcome);
-                      if (outcome?.delivered) streamSpeech(outcome, segment, outcome.messageId);
+                      await routeTurnSpeech(segment, locus);
                     } catch (err) {
                       console.error('speech routing failed:', err);
                     }
@@ -19189,9 +19206,7 @@ export class AgentFramework {
                 // Deliver sequentially (await each) so the segments land in order.
                 for (const seg of segments) {
                   try {
-                    const outcome = await this.channelRegistry.routeSpeech(agent.name, seg, locus);
-                    this.recordProseDelivery(streamRouting, outcome);
-                    if (outcome?.delivered) streamSpeech(outcome, seg, outcome.messageId);
+                    await routeTurnSpeech(seg, locus);
                   } catch (err) {
                     console.error('speech routing failed:', err);
                   }

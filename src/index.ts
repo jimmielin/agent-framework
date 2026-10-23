@@ -196,3 +196,4 @@ export {
   type SilentHeartbeatStamp,
   type SilentHeartbeatTick,
 } from './silent-heartbeat.js';
+export { proseStaysOnOperatorSurface, OPERATOR_SURFACE_TRIGGER } from './mcpl/operator-surface.js';
